@@ -1,0 +1,105 @@
+# ==========================================
+# C++ 编译副产物
+# ==========================================
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+*.pdb
+*.exp
+*.ilk
+
+# ==========================================
+# CMake & Ninja 构建目录和文件
+# ==========================================
+# 忽略常见的构建输出文件夹 (Visual Studio 或命令行通常使用 build/ 或 out/)
+/build/
+/build-*/
+/out/
+/bin/
+
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+CMakeLists.txt.user
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+_deps/
+
+# Ninja 特有
+.ninja_deps
+.ninja_log
+build.ninja
+rules.ninja
+
+# ==========================================
+# Qt 特有文件
+# ==========================================
+# Qt Creator项目文件
+*.pro.user
+*.pro.user.*
+.qmake.stash
+
+# Qt 自动生成的文件 (通常由 CMAKE_AUTOUIC, AUTOMOC, AUTORCC 在构建目录中生成)
+# 如果由于某种原因生成在了源码目录，这些规则可以防止它们被提交
+moc_*.cpp
+moc_*.h
+qrc_*.cpp
+ui_*.h
+
+# 编译后的翻译文件 (源码是 .ts, .qm 是运行时的二进制生成物)
+*.qm
+
+# ==========================================
+# Visual Studio / IDE 相关
+# ==========================================
+.vs/
+*.sln
+*.vcxproj
+*.vcxproj.user
+*.vcxproj.filters
+*.suo
+*.ntvs*
+*.njsproj
+*.xcworkspace
+*.dir.compiler_depend.make
+*.dir.compiler_depend.ts
+
+CMakeSettings.json
+CMakePresets.json
+.vscode/
+
+# ==========================================
+# 操作系统相关
+# ==========================================
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ==========================================
+# 第三方库与日志 (可选)
+# ==========================================
+*.log
+# 如果你不希望将庞大的第三方库 (如 HALCON libs/bins) 放入 git，可以取消下方注释
+/SDK
+
+# ==========================================
+# 原始采集资料（1.7GB，已整理进 data/，不入库）
+# ==========================================
+/DMD坏点检测/
+
+# WorkBuddy 项目数据（本地保留，不入库）
+/.workbuddy-ai/

@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<hdevelop file_version="1.2" halcon_version="24.11.1.0">
+<procedure name="main">
+<interface/>
+<body>
+<l>list_image_files ('D:/data/DMD坏点检测/ocr', 'default', [], ImageFiles)</l>
+<l>read_ocr_class_mlp ('Industrial_0-9A-Z_NoRej.omc', OCRHandle)</l>
+<c></c>
+<l>for i:=1 to |ImageFiles| by 1 </l>
+<l>    read_image(Image, ImageFiles[i-1])</l>
+<c>    *区域提取，仿射变换，旋转</c>
+<l>    binary_threshold(Image, Region, 'max_separability', 'light', UsedThreshold)</l>
+<l>    closing_rectangle1(Region, RegionClosing, 51, 51)</l>
+<l>    fill_up(RegionClosing, RegionFillUp)</l>
+<l>    connection(RegionFillUp, ConnectedRegions)</l>
+<l>    select_shape_std(ConnectedRegions,SelectedRegions, ['max_area'], [90])</l>
+<l>    gen_contour_region_xld(SelectedRegions, Contours, 'border')</l>
+<l>    fit_rectangle2_contour_xld (Contours, 'regression', -1, 0, 0, 3, 2, \
+                            RectRow, RectCol, RectPhi, RectLength1, RectLength2, PointOrder)</l>
+<l>    gen_rectangle2 (DmdRectangle, RectRow, RectCol, RectPhi, RectLength1, RectLength2)</l>
+<l>    vector_angle_to_rigid (RectRow, RectCol, RectPhi, RectRow, RectCol, 0, HomMat2D)</l>
+<l>    affine_trans_image (Image, ImageAffine, HomMat2D, 'constant', 'false')</l>
+<l>    affine_trans_region (DmdRectangle, RectAffine, HomMat2D, 'nearest_neighbor')</l>
+<l>    reduce_domain(ImageAffine, RectAffine, ImageReduced)</l>
+<l>    crop_domain(ImageReduced, ImagePart)</l>
+<l>    stop()</l>
+<c>* --- OCR 识别开始 ---</c>
+<c>    * 1. 预处理：提取文字区域（假设黑体文字比背景暗，即黑色字）</c>
+<l>    invert_image (ImagePart, ImageInvert)</l>
+<l>    mean_image(ImageInvert, ImageMean, 51, 51)</l>
+<l>    dyn_threshold(ImagePart, ImageMean, RegionDynThresh, 15, 'dark')</l>
+<c>    * 2. 打断并过滤干扰（根据字符大小筛选）</c>
+<l>    connection (RegionDynThresh, ConnectedChars)</l>
+<c>    </c>
+<c>    * 根据你实际的字符像素大小调整面积和宽高过滤</c>
+<c>    </c>
+<c></c>
+<l>    select_shape (ConnectedChars, SelectedChars, \
+                  ['width','height','convexity','rectangularity'], \
+                  'and', \
+                  [120, 400, 0.25, 0.25], [500, 550, 1.0, 1.0])</l>
+<l>* select_shape (ConnectedChars, SelectedChars, ['width','height'], 'and', [120, 400], [500, 550])</l>
+<c>    *对筛选出的字符进行分行，按行识别字符串</c>
+<l>    sort_region (SelectedChars, SortedChars, 'character', 'true', 'row')</l>
+<l>    area_center (SortedChars, Area, Rows, Cols)</l>
+<l>    count_obj (SortedChars, NumChars)</l>
+<c>    * 存储每行识别结果的数组</c>
+<l>    LineStrings := []    </l>
+<l>    gen_empty_obj (CurrentLineObj)</l>
+<c>    * 设置行间距阈值：如果当前字符比上一个字符的 Row 大于半个字符高度，则视为新的一行</c>
+<c>    * 这个值（例如 40）需要根据你图像中真实的行间距像素值来定</c>
+<l>    MaxRowGap := 200</l>
+<c>    * --- 3. 循环遍历字符，自动分行识别 ---</c>
+<l>    if (NumChars &gt; 0)</l>
+<l>        for j := 1 to NumChars by 1</l>
+<l>            select_obj (SortedChars, SingleChar, j)</l>
+<c>            </c>
+<c>            * 检查是否换行（从第2个字符开始判断）</c>
+<l>            if (j &gt; 1)</l>
+<l>                RowGap := Rows[j-1] - Rows[j-2]</l>
+<l>                if (RowGap &gt; MaxRowGap)</l>
+<c>                    * --- 识别并清理当前行内容 ---</c>
+<l>                    do_ocr_multi_class_mlp (CurrentLineObj, ImagePart, OCRHandle, Class, Conf)</l>
+<c>                    * 修正后的正则用法：将 'replace_all' 放在表达式字符串内</c>
+<l>                    RawStr := sum(Class)</l>
+<l>                    tuple_regexp_replace (RawStr, '[\\s]+replace_all', '', CleanStr)</l>
+<l>                    LineStrings := [LineStrings, CleanStr]</l>
+<c>                    </c>
+<c>                    * 重置当前行对象</c>
+<l>                    gen_empty_obj (CurrentLineObj)</l>
+<l>                endif</l>
+<l>            endif</l>
+<c>            * 将当前字符加入当前行</c>
+<l>            concat_obj (CurrentLineObj, SingleChar, CurrentLineObj)</l>
+<l>        endfor</l>
+<c>        * --- 识别最后一行 ---</c>
+<l>        do_ocr_multi_class_mlp (CurrentLineObj, ImagePart, OCRHandle, Class, Conf)</l>
+<l>        tuple_regexp_replace (sum(Class), '[\\s]+replace_all', '', CleanStr)</l>
+<l>        LineStrings := [LineStrings, CleanStr]</l>
+<l>    endif</l>
+<l>    stop ()</l>
+<l>endfor</l>
+<c></c>
+<c></c>
+</body>
+<docu id="main">
+<parameters/>
+</docu>
+</procedure>
+<procedure name="chartuple2str">
+<interface>
+<ic>
+<par name="Class" base_type="ctrl" dimension="0"/>
+</ic>
+<oc>
+<par name="Str" base_type="ctrl" dimension="0"/>
+</oc>
+</interface>
+<body>
+<l>Str := ''</l>
+<l>for i := 0 to |Class| - 1 by 1</l>
+<l>    Str := Str + Class[i]</l>
+<l>endfor</l>
+<l>return ()</l>
+</body>
+<docu id="chartuple2str">
+<parameters>
+<parameter id="Class"/>
+<parameter id="Str"/>
+</parameters>
+</docu>
+</procedure>
+</hdevelop>

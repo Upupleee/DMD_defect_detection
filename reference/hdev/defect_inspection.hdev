@@ -1,0 +1,217 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<hdevelop file_version="1.2" halcon_version="24.11.1.0">
+<procedure name="main">
+<interface/>
+<body>
+<c>*测试原图</c>
+<c>* 1. 原图</c>
+<l>read_image(Image1, 'C:/Users/zhang/Desktop/Aiscent_USB9500/Aiscent_USB/1080p/baseimage1.bmp')</l>
+<c></c>
+<c>* 2. ROI</c>
+<l>threshold(Image1, Temp_Region, 128, 255)</l>
+<l>fill_up(Temp_Region, T_RegionFillUp)</l>
+<l>reduce_domain(Image1, T_RegionFillUp, T_ImageReduced)</l>
+<c></c>
+<c>* 3. 黑色区域（建议直接做区域，不用直方图）</c>
+<l>threshold(T_ImageReduced, RegionBlack, 0, 10)</l>
+<c></c>
+<c>* 4. 获取所有黑色像素坐标（关键）</c>
+<l>get_region_points(RegionBlack, Rows, Cols)</l>
+<c></c>
+<c>* 5. 一次性生成所有 cross并且得到模拟DMD坏点数量真值，方便后续对比</c>
+<l>gen_cross_contour_xld(T_Crosses, Rows, Cols, 1, 0.78) </l>
+<l>BlackPixelCount := |Rows|</l>
+<l>dev_clear_window()</l>
+<l>dev_display(Image1)</l>
+<l>dev_display(T_Crosses)</l>
+<l>dev_disp_text ('Defect DMD: ' + BlackPixelCount$'.2f' , 'window', 'top', 'left', 'blue', 'box', 'true')</l>
+<l>stop()</l>
+<c>* ==========================================================</c>
+<c>* 算法功能：DMD 微镜坏点/缺陷高精度检测与坐标映射定位</c>
+<c>* ==========================================================</c>
+<l>count_seconds (TimeStart)</l>
+<l>dev_set_draw ('margin')</l>
+<l>dev_clear_window()</l>
+<c>* --- 1. 图像预处理与 DMD 轮廓提取 ---</c>
+<l>read_image (Image, 'D:/data/DMD坏点检测/Image_20260408201259265.bmp')</l>
+<c></c>
+<c>*在黑色区域中寻找DMD区域</c>
+<l>threshold(Image, BlackDmdRegion, 0, 25)</l>
+<l>connection(BlackDmdRegion, ConnectedBlackDmdRegions)</l>
+<l>select_shape_std(ConnectedBlackDmdRegions, TargetBlackDmdRegion, 'max_area', 90)</l>
+<l>fill_up (TargetBlackDmdRegion, FillupTargetBlackDmdRegion)</l>
+<l>reduce_domain(Image, FillupTargetBlackDmdRegion, TargetImage)</l>
+<c></c>
+<l>binary_threshold (TargetImage, RegionLight, 'max_separability', 'light', UsedThreshold)</l>
+<l>fill_up(RegionLight, RegionLightFillUp)</l>
+<l>closing_rectangle1(RegionLightFillUp, RegionLightClosing, 50, 50)</l>
+<l>* stop()</l>
+<l>count_obj (RegionLightClosing, NumRegions)</l>
+<l>if (NumRegions &gt;= 2)</l>
+<l>    union1 (RegionLightClosing, DmdRegionOriginal)</l>
+<l>else</l>
+<c>    * 修复隐患：如果只有1个区域，必须将其复制赋值，否则后续无对象可用</c>
+<l>    copy_obj (RegionLightClosing, DmdRegionOriginal, 1, 1)</l>
+<l>endif</l>
+<c></c>
+<c>* --- 2. 图像仿射变换与目标区域裁剪 ---</c>
+<c>* 平滑边缘并拟合出标准的外接矩形，用于计算倾斜角度</c>
+<l>gen_contour_region_xld (RegionLightClosing, DmdContour, 'border')</l>
+<l>smooth_contours_xld (DmdContour, ContourSmooth, 7)</l>
+<l>fit_rectangle2_contour_xld (ContourSmooth, 'regression', -1, 0, 0, 3, 2, \
+                            RectRow, RectCol, RectPhi, RectLength1, RectLength2, PointOrder)</l>
+<c>* 生成校正矩阵并执行仿射变换（将倾斜的 DMD 摆正）</c>
+<l>gen_rectangle2 (DmdRectangle, RectRow, RectCol, RectPhi, RectLength1, RectLength2)</l>
+<l>vector_angle_to_rigid (RectRow, RectCol, RectPhi, RectRow, RectCol, 0, HomMat2D)</l>
+<l>affine_trans_image (TargetImage, ImageAffine, HomMat2D, 'constant', 'false')</l>
+<l>affine_trans_region (DmdRectangle, RectAffine, HomMat2D, 'nearest_neighbor')</l>
+<c></c>
+<c>* 裁剪出纯粹的 DMD 工作区域（去除背景）</c>
+<l>* smallest_rectangle1(RectAffine, Row1, Col1, Row2, Col2)</l>
+<l>* gen_rectangle1 (RectCrop, Row1, Col1, Row2, Col2)</l>
+<l>inner_rectangle1(RectAffine, Row1, Col1, Row2, Col2)</l>
+<l>gen_rectangle1 (RectCrop, Row1, Col1, Row2, Col2)</l>
+<l>reduce_domain (ImageAffine, RectCrop, ImageReduced)</l>
+<l>crop_domain (ImageReduced, ImagePart)</l>
+<l>get_image_size (ImagePart, ImageWidth, ImageHeight)</l>
+<l>* stop()</l>
+<c>* --- 3. 计算物理微镜与像素的映射比例 ---</c>
+<c>* 设定 DMD 的物理分辨率（按需修改）</c>
+<l>DmdResolutionCol := 1920.0</l>
+<l>DmdResolutionRow := 1080.0</l>
+<l>PixPerCol := ImageWidth / DmdResolutionCol</l>
+<l>PixPerRow := ImageHeight / DmdResolutionRow</l>
+<c></c>
+<c>* --- 4. 缺陷区域初步提取 ---</c>
+<c>* 提取暗区（潜在坏点）并筛除零星噪点</c>
+<l>scale_image_range(ImagePart, ImageScaled, 200, 255)</l>
+<l>* emphasize(ImagePart, ImageEquHisto, 13, 13, 2)</l>
+<l>binary_threshold(ImageScaled, DefectRegion, 'smooth_histo', 'dark', UsedThreshold1)</l>
+<l>connection (DefectRegion, ConnectedDefects)</l>
+<l>select_shape (ConnectedDefects, ValidDefects, 'area', 'and', 9, 9999999)</l>
+<c></c>
+<c>* --- 5. 缺陷像素向微镜坐标的映射与收集 ---</c>
+<c>* 预定义空数组，用于累加收集所有受损微镜的行列索引</c>
+<l>DefectMirrorsRow := []</l>
+<l>DefectMirrorsCol := []</l>
+<l>select_shape (ValidDefects, ValidDefects, ['width','height'], 'and', [3, 3], [999999, 999999])</l>
+<l>count_obj (ValidDefects, DefectCount)</l>
+<l>for i := 1 to DefectCount by 1</l>
+<l>    select_obj (ValidDefects, SingleDefect, i)</l>
+<c>    </c>
+<c>    * 优化A: 腐蚀操作去除光学衍射导致的区域“虚胖”，防止单个坏点被误判为周边受损</c>
+<l>*     erosion_circle (SingleDefect, RegionEroded, 0.5)</l>
+<l>    get_region_points (SingleDefect, DefectPixelRows, DefectPixelCols)</l>
+<c>    </c>
+<l>    if (|DefectPixelRows| &gt; 0)</l>
+<c>        * 将像素坐标降维映射为微镜网格索引</c>
+<l>        IdxRows := floor(DefectPixelRows / PixPerRow)</l>
+<l>        IdxCols := floor(DefectPixelCols / PixPerCol)</l>
+<c>        </c>
+<c>        * 局部去重：合成 ID -&gt; 排序 -&gt; 去重 -&gt; 分解回行列</c>
+<l>        CombinedID := IdxRows * 10000 + IdxCols</l>
+<l>        IntUniqueIDs := int(uniq(sort(CombinedID)))</l>
+<c>        </c>
+<l>        DefectMirrorsRow := [DefectMirrorsRow, IntUniqueIDs / 10000]</l>
+<l>        DefectMirrorsCol := [DefectMirrorsCol, IntUniqueIDs % 10000]</l>
+<l>    endif</l>
+<l>endfor</l>
+<c></c>
+<c>* --- 6. 全局去重与亚像素中心点推算 ---</c>
+<c>* 解决相邻的不同连通域可能重复记录同一个微镜坐标的问题</c>
+<l>if (|DefectMirrorsRow| &gt; 0)</l>
+<l>    GlobalCombinedID := DefectMirrorsRow * 10000 + DefectMirrorsCol</l>
+<l>    IntUniqueGlobalIDs := int(uniq(sort(GlobalCombinedID)))</l>
+<c>    </c>
+<l>    DefectMirrorsRow := IntUniqueGlobalIDs / 10000</l>
+<l>    DefectMirrorsCol := IntUniqueGlobalIDs % 10000</l>
+<l>endif</l>
+<c></c>
+<c>* 反推计算十字标记在原图上的亚像素中心坐标</c>
+<l>CenterRows := DefectMirrorsRow * PixPerRow + (PixPerRow / 2.0)</l>
+<l>CenterCols := DefectMirrorsCol * PixPerCol + (PixPerCol / 2.0)</l>
+<c></c>
+<c></c>
+<c>* --- 7. 二次过滤：基于高精度插值的灰度验证 ---</c>
+<c>* 彻底排除坐标取整偏差导致的假性坏点（位于亮区的点）</c>
+<l>if (|CenterRows| &gt; 0)</l>
+<c>    * 使用双线性插值，获取浮点中心坐标位置的真实灰度混合值</c>
+<l>    get_grayval_interpolated (ImageScaled, CenterRows, CenterCols, 'bilinear', GrayValues)</l>
+<c>    </c>
+<c>    * 设定灰度上限，只保留灰度值 &lt;= 100 的真实暗斑</c>
+<l>    GrayThreshold := 130</l>
+<l>    tuple_less_equal_elem (GrayValues, GrayThreshold, IsDarkMask)</l>
+<l>    tuple_find (IsDarkMask, 1, ValidIndices)</l>
+<c>    </c>
+<c>    * 根据过滤结果刷新最终数据</c>
+<l>    if (ValidIndices[0] != -1)</l>
+<l>        DefectMirrorsRow := DefectMirrorsRow[ValidIndices]</l>
+<l>        DefectMirrorsCol := DefectMirrorsCol[ValidIndices]</l>
+<l>        CenterRows := CenterRows[ValidIndices]</l>
+<l>        CenterCols := CenterCols[ValidIndices]</l>
+<l>    else</l>
+<c>        * 若全被过滤则置空</c>
+<l>        DefectMirrorsRow := []</l>
+<l>        DefectMirrorsCol := []</l>
+<l>        CenterRows := []</l>
+<l>        CenterCols := []</l>
+<l>    endif</l>
+<l>endif</l>
+<c></c>
+<c>* --- 8. 结果可视化与性能统计 ---</c>
+<l>dev_display (ImageScaled)</l>
+<c></c>
+<c>* 矢量化批量绘制所有的十字标记</c>
+<l>if (|CenterRows| &gt; 0)</l>
+<l>    gen_cross_contour_xld (Crosses, CenterRows, CenterCols, 2, -0.78)</l>
+<l>    dev_set_color ('red')</l>
+<l>    dev_display (Crosses)</l>
+<l>endif</l>
+<c></c>
+<l>count_seconds (TimeEnd)</l>
+<l>ExecTimeMs := (TimeEnd - TimeStart) * 1000</l>
+<l>TotalBadMirrors := |DefectMirrorsRow|</l>
+<c></c>
+<c>* 在界面左上角打印最终统计面板</c>
+<l>dev_disp_text ('Time: ' + ExecTimeMs$'.2f' + 'ms | Defects: ' + TotalBadMirrors, 'window', 'top', 'left', 'blue', 'box', 'true')</l>
+<c></c>
+<l>stop ()</l>
+</body>
+<docu id="main">
+<parameters/>
+</docu>
+</procedure>
+<procedure name="reduce_dmd_domain">
+<interface>
+<io>
+<par name="Image" base_type="iconic" dimension="0"/>
+</io>
+<oo>
+<par name="ImageReduced" base_type="iconic" dimension="0"/>
+</oo>
+<oc>
+<par name="UsedThreshold" base_type="ctrl" dimension="0"/>
+<par name="Row" base_type="ctrl" dimension="0"/>
+<par name="Column" base_type="ctrl" dimension="0"/>
+<par name="Phi" base_type="ctrl" dimension="0"/>
+<par name="Length1" base_type="ctrl" dimension="0"/>
+<par name="Length2" base_type="ctrl" dimension="0"/>
+</oc>
+</interface>
+<body>
+<c></c>
+</body>
+<docu id="reduce_dmd_domain">
+<parameters>
+<parameter id="Column"/>
+<parameter id="Image"/>
+<parameter id="ImageReduced"/>
+<parameter id="Length1"/>
+<parameter id="Length2"/>
+<parameter id="Phi"/>
+<parameter id="Row"/>
+<parameter id="UsedThreshold"/>
+</parameters>
+</docu>
+</procedure>
+</hdevelop>

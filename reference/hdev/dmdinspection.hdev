@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<hdevelop file_version="1.2" halcon_version="24.11.1.0">
+<procedure name="main">
+<interface/>
+<body>
+<c>* =========================</c>
+<c>* OCR Initialization</c>
+<c>* =========================</c>
+<c></c>
+<l>read_ocr_class_mlp ('Industrial_Rej', OCRHandle)</l>
+<l>create_text_model_reader ('auto', OCRHandle, TextModel)</l>
+<c></c>
+<l>set_text_model_param (TextModel, 'polarity', 'light_on_dark')</l>
+<l>set_text_model_param (TextModel, 'min_char_height', 10)</l>
+<c></c>
+<c>* =========================</c>
+<c>* OCR Processing</c>
+<c>* =========================</c>
+<c></c>
+<l>read_image (Image, 'ocr/medication_package_02_right')</l>
+<c></c>
+<l>find_text (Image, TextModel, TextResult)</l>
+<c></c>
+<l>get_text_object (TextLines, TextResult, 'all_lines')</l>
+<c></c>
+<l>get_text_result (TextResult, 'class', Characters)</l>
+<c></c>
+<l>tuple_sum (Characters, Text)</l>
+<c></c>
+<l>dev_display (Image)</l>
+<l>dev_display (TextLines)</l>
+</body>
+<docu id="main">
+<parameters/>
+</docu>
+</procedure>
+</hdevelop>

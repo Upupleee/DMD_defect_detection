@@ -1,0 +1,412 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<hdevelop file_version="1.2" halcon_version="24.11.1.0">
+<procedure name="main">
+<interface/>
+<body>
+<c>* 1. 读取图像</c>
+<l>read_image (Image, 'D:/data/DMD坏点检测/testimgs/Image_20260413163428132.bmp')</l>
+<c></c>
+<c>* 2. 调用优化后的算法 (控制参数可调)</c>
+<c>* 参数：1080p 分辨率，最小面积 5，判定阈值 120</c>
+<c>* 外部调用</c>
+<l>GenCrossOption := 'true' </l>
+<l>invert:='true'</l>
+<l>detect_dmd_bad_pixels (Image, ImagePart, DefectCrosses, 1080.0, 1920.0, 9, 20, GenCrossOption, invert, BadMirrorRows, BadMirrorCols, ValidRowStrings)</l>
+<c></c>
+<c>* 如果开启了显示</c>
+<l>if (GenCrossOption == 'true')</l>
+<c></c>
+<l>    dev_display (ImagePart)</l>
+<l>    dev_set_color ('red')</l>
+<l>    dev_display (DefectCrosses)</l>
+<l>endif</l>
+<c></c>
+<c>* 3. [新增] 将十字直接绘制到图像像素上，输出 ImageResult </c>
+<l>paint_crosses_to_image (ImagePart, DefectCrosses, ImageResult, GenCrossOption)</l>
+<c></c>
+<c>* 4. 窗口显示与结果统计</c>
+<l>if (GenCrossOption == 'true')</l>
+<c>    * 此时不需要 dev_set_color('red') 和 dev_display(DefectCrosses) 了</c>
+<c>    * 因为十字已经变成了 ImageResult 像素的一部分</c>
+<l>    dev_display (ImageResult)</l>
+<l>endif</l>
+<c></c>
+<c>* 坏点总数</c>
+<l>BadCount := |BadMirrorRows|</l>
+<c></c>
+<c></c>
+<c></c>
+</body>
+<docu id="main">
+<parameters/>
+</docu>
+</procedure>
+<procedure name="detect_dmd_bad_pixels">
+<interface>
+<io>
+<par name="Image" base_type="iconic" dimension="0"/>
+</io>
+<oo>
+<par name="ImagePart" base_type="iconic" dimension="0"/>
+<par name="DefectCrosses" base_type="iconic" dimension="0"/>
+</oo>
+<ic>
+<par name="DmdResRow" base_type="ctrl" dimension="0"/>
+<par name="DmdResCol" base_type="ctrl" dimension="0"/>
+<par name="MinArea" base_type="ctrl" dimension="0"/>
+<par name="GrayThresh" base_type="ctrl" dimension="0"/>
+<par name="GenCross" base_type="ctrl" dimension="0"/>
+<par name="invert" base_type="ctrl" dimension="0"/>
+</ic>
+<oc>
+<par name="BadMirrorRows" base_type="ctrl" dimension="0"/>
+<par name="BadMirrorCols" base_type="ctrl" dimension="0"/>
+<par name="ValidRowStrings" base_type="ctrl" dimension="0"/>
+</oc>
+</interface>
+<body>
+<c>* ----------------------------------------------------------</c>
+<c>* 算法功能：DMD 微镜坏点检测（可选可视化输出）</c>
+<c>* ----------------------------------------------------------</c>
+<c></c>
+<c>* 新增考虑暗场亮点的情况,采用参数控制 </c>
+<c>* --- 1. DMD 区域定位与裁剪 ---</c>
+<l>threshold (Image, BlackDmdRegion, 0, 100)</l>
+<l>connection (BlackDmdRegion, ConnectedBlackDmdRegions)</l>
+<l>select_shape_std (ConnectedBlackDmdRegions, TargetBlackDmdRegion, 'max_area', 90)</l>
+<l>fill_up (TargetBlackDmdRegion, FillupTargetBlackDmdRegion)</l>
+<l>reduce_domain (Image, FillupTargetBlackDmdRegion, TargetImage)</l>
+<c></c>
+<l>binary_threshold (TargetImage, RegionLight, 'max_separability', 'light', UsedThreshold)</l>
+<l>fill_up (RegionLight, RegionLightFillUp)</l>
+<l>closing_rectangle1 (RegionLightFillUp, RegionLightClosing, 50, 50)</l>
+<c></c>
+<l>count_obj (RegionLightClosing, NumRegions)</l>
+<l>if (NumRegions &gt;= 2)</l>
+<l>    union1 (RegionLightClosing, DmdRegionOriginal)</l>
+<l>else</l>
+<l>    copy_obj (RegionLightClosing, DmdRegionOriginal, 1, 1)</l>
+<l>endif</l>
+<c></c>
+<l>gen_contour_region_xld (DmdRegionOriginal, DmdContour, 'border')</l>
+<l>smooth_contours_xld (DmdContour, ContourSmooth, 7)</l>
+<l>select_shape_xld(ContourSmooth, ContourSmooth, 'area_points', 'and', 2000, 999999)</l>
+<l>fit_rectangle2_contour_xld (ContourSmooth, 'regression', -1, 0, 0, 3, 2, RectRow, RectCol, RectPhi, RectLength1, RectLength2, PointOrder)</l>
+<c></c>
+<c>* 仿射变换摆正图像</c>
+<l>vector_angle_to_rigid (RectRow, RectCol, RectPhi, RectRow, RectCol, 0, HomMat2D)</l>
+<l>affine_trans_image (TargetImage, ImageAffine, HomMat2D, 'constant', 'false')</l>
+<l>gen_rectangle2 (DmdRectangle, RectRow, RectCol, RectPhi, RectLength1, RectLength2)</l>
+<l>affine_trans_region (DmdRectangle, RectAffine, HomMat2D, 'nearest_neighbor')</l>
+<c></c>
+<c>* 提取纯工作区 (核心输出：ImagePart)</c>
+<l>inner_rectangle1 (RectAffine, Row1, Col1, Row2, Col2)</l>
+<l>gen_rectangle1 (RectCrop, Row1, Col1, Row2, Col2)</l>
+<l>reduce_domain (ImageAffine, RectCrop, ImageReduced)</l>
+<l>crop_domain (ImageReduced, ImagePart)</l>
+<l>if(invert=='true')</l>
+<l>    threshold(ImagePart, ImgPart_Region, 0, 50)</l>
+<l>    connection(ImgPart_Region, ImgPart_ConnectedRegions)</l>
+<l>    select_shape_std (ImgPart_ConnectedRegions, ImgPart_TargetBlackDmdRegion, 'max_area', 70)</l>
+<l>    count_obj (ImgPart_TargetBlackDmdRegion, NumRegions1)</l>
+<l>    if (NumRegions1 &gt;= 2)</l>
+<l>        union1 (ImgPart_TargetBlackDmdRegion, ImgPart_TargetBlackDmdRegion)</l>
+<l>    endif</l>
+<l>    smallest_rectangle1(ImgPart_TargetBlackDmdRegion, ImgPart_Row1, ImgPart_Column1, ImgPart_Row2, ImgPart_Column2)</l>
+<l>    gen_rectangle1(ImgPart_Rectangle, ImgPart_Row1, ImgPart_Column1, ImgPart_Row2, ImgPart_Column2)</l>
+<l>    reduce_domain(ImagePart, ImgPart_Rectangle, ImageReduced1)</l>
+<l>    crop_domain(ImageReduced1, ImagePart1)</l>
+<l>    invert_image(ImagePart1, ImagePart)</l>
+<l>endif</l>
+<l>get_image_size (ImagePart, ImageWidth, ImageHeight)</l>
+<c></c>
+<c>* --- 2. 计算映射比例 (像素/微镜) ---</c>
+<l>PixPerCol := ImageWidth / DmdResCol</l>
+<l>PixPerRow := ImageHeight / DmdResRow</l>
+<c></c>
+<c>* --- 3. 坏点提取逻辑 ---</c>
+<l>scale_image_range (ImagePart, ImageScaled, 100, 150)</l>
+<l>binary_threshold (ImageScaled, DefectRegion, 'smooth_histo', 'dark', UsedThreshold1)</l>
+<l>connection (DefectRegion, ConnectedDefects)</l>
+<l>select_shape (ConnectedDefects, ValidDefects, 'area', 'and', MinArea, 99999999)</l>
+<c></c>
+<c>* --- 4. 物理坐标映射 ---</c>
+<l>BadMirrorRows := []</l>
+<l>BadMirrorCols := []</l>
+<l>gen_empty_obj (DefectCrosses)</l>
+<c></c>
+<c>* 增加高宽筛选</c>
+<l>select_shape (ValidDefects, ValidDefectsFiltered, ['width','height'], 'and', [3, 3], [999999, 999999])</l>
+<l>count_obj (ValidDefectsFiltered, DefectCount)</l>
+<c></c>
+<l>if (DefectCount &gt; 0)</l>
+<l>    for i := 1 to DefectCount by 1</l>
+<l>        select_obj (ValidDefectsFiltered, SingleDefect, i)</l>
+<l>        get_region_points (SingleDefect, DRows, DCols)</l>
+<c>        </c>
+<c>        * 映射到DMD物理网格坐标 (0-indexed)</c>
+<l>        IdxRows := floor(DRows / PixPerRow)</l>
+<l>        IdxCols := floor(DCols / PixPerCol)</l>
+<c>        </c>
+<c>        * 局部去重</c>
+<l>        CombinedID := IdxRows * 10000 + IdxCols</l>
+<l>        IntUniqueIDs := int(uniq(sort(CombinedID)))</l>
+<c>        </c>
+<l>        BadMirrorRows := [BadMirrorRows, IntUniqueIDs / 10000]</l>
+<l>        BadMirrorCols := [BadMirrorCols, IntUniqueIDs % 10000]</l>
+<l>    endfor</l>
+<c></c>
+<c>    * 全局去重</c>
+<l>    if (|BadMirrorRows| &gt; 0)</l>
+<l>        GlobalID := BadMirrorRows * 10000 + BadMirrorCols</l>
+<l>        UniqueGlobalID := int(uniq(sort(GlobalID)))</l>
+<l>        BadMirrorRows := UniqueGlobalID / 10000</l>
+<l>        BadMirrorCols := UniqueGlobalID % 10000</l>
+<c>        </c>
+<c>        * 二次验证：利用插值灰度排除噪点</c>
+<l>        CenterRows := BadMirrorRows * PixPerRow + (PixPerRow / 2.0)</l>
+<l>        CenterCols := BadMirrorCols * PixPerCol + (PixPerCol / 2.0)</l>
+<l>        get_grayval_interpolated (ImageScaled, CenterRows, CenterCols, 'bilinear', GrayVals)</l>
+<c>        </c>
+<l>        tuple_less_equal_elem (GrayVals, GrayThresh, IsBad)</l>
+<l>        tuple_find (IsBad, 1, Indices)</l>
+<c>        </c>
+<l>        if (Indices != -1)</l>
+<l>            BadMirrorRows := BadMirrorRows[Indices]</l>
+<l>            BadMirrorCols := BadMirrorCols[Indices]</l>
+<c>            </c>
+<c>            * --- 可选：生成 Cross (坐标对应 ImagePart) ---</c>
+<l>            if (GenCross == 'true')</l>
+<l>                gen_cross_contour_xld (DefectCrosses, CenterRows[Indices], CenterCols[Indices], 4, 0.78)</l>
+<l>            endif</l>
+<l>        else</l>
+<l>            BadMirrorRows := []</l>
+<l>            BadMirrorCols := []</l>
+<l>        endif</l>
+<l>    endif</l>
+<c>    * 增加算法，统计DMD中（ImagePart）中连续的，没有出现坏点的行号，例如输出为第N行到第M行为无坏点行</c>
+<c>    * ----------------------------------------------------------</c>
+<c>    * --- 5. 统计无坏点连续行 (N到M行) ---</c>
+<c>    * ----------------------------------------------------------</c>
+<l>    ValidStartRows := []</l>
+<l>    ValidEndRows := []</l>
+<c>    </c>
+<c>    * 安全起见，对坏点行号再次进行排序并去重</c>
+<l>    tuple_sort (BadMirrorRows, SortedBadRows)</l>
+<l>    tuple_uniq (SortedBadRows, UniqueBadRows)</l>
+<l>    tuple_length (UniqueBadRows, NumBadRows)</l>
+<c>    </c>
+<l>    if (NumBadRows == 0)</l>
+<c>        * 情况 A：整块 DMD 均无坏点</c>
+<l>        ValidStartRows := [0]</l>
+<l>        ValidEndRows := [DmdResRow - 1]</l>
+<l>    else</l>
+<c>        * 情况 B：存在坏点，寻找坏点之间的安全区间</c>
+<c>        </c>
+<c>        * 1. 检查首段 (从 第 0 行 到 第一个坏点行-1)</c>
+<l>        FirstBadRow := UniqueBadRows[0]</l>
+<l>        if (FirstBadRow &gt; 0)</l>
+<l>            ValidStartRows := [ValidStartRows, 0]</l>
+<l>            ValidEndRows := [ValidEndRows, FirstBadRow - 1]</l>
+<l>        endif</l>
+<c>        </c>
+<c>        * 2. 检查中间段 (遍历坏点行号之间的间隔)</c>
+<l>        if (NumBadRows &gt; 1)</l>
+<l>            for k := 0 to NumBadRows - 2 by 1</l>
+<l>                StartGap := UniqueBadRows[k] + 1</l>
+<l>                EndGap := UniqueBadRows[k+1] - 1</l>
+<c>                * 如果前一个坏点和后一个坏点之间有空隙(&gt;=1行)</c>
+<l>                if (StartGap &lt;= EndGap)</l>
+<l>                    ValidStartRows := [ValidStartRows, StartGap]</l>
+<l>                    ValidEndRows := [ValidEndRows, EndGap]</l>
+<l>                endif</l>
+<l>            endfor</l>
+<l>        endif</l>
+<c>        </c>
+<c>        * 3. 检查尾段 (从最后一个坏点行+1 到 DMD总行数-1)</c>
+<l>        LastBadRow := UniqueBadRows[NumBadRows - 1]</l>
+<l>        if (LastBadRow &lt; DmdResRow - 1)</l>
+<l>            ValidStartRows := [ValidStartRows, LastBadRow + 1]</l>
+<l>            ValidEndRows := [ValidEndRows, DmdResRow - 1]</l>
+<l>        endif</l>
+<l>    endif</l>
+<c>    </c>
+<c>    * --- 可选：生成格式化的字符串用于 UI 显示或报告输出 ---</c>
+<l>    ValidRowStrings := []</l>
+<l>    tuple_length (ValidStartRows, NumValidRanges)</l>
+<l>    if (NumValidRanges &gt; 0)</l>
+<l>        for k := 0 to NumValidRanges - 1 by 1</l>
+<c>            * 生成类似于 "第 0 行到第 15 行无坏点" 的字符串</c>
+<l>            RangeStr := '第 ' + ValidStartRows[k] + ' 行到第 ' + ValidEndRows[k] + ' 行无坏点'</l>
+<l>            ValidRowStrings := [ValidRowStrings, RangeStr]</l>
+<l>        endfor</l>
+<l>    else</l>
+<l>        ValidRowStrings := ['全部行均存在坏点']</l>
+<l>    endif</l>
+<c></c>
+<l>endif</l>
+<l>if(invert=='true')</l>
+<l>    invert_image(ImagePart, ImagePart)</l>
+<l>endif</l>
+<l>return ()</l>
+</body>
+<docu id="detect_dmd_bad_pixels">
+<parameters>
+<parameter id="BadMirrorCols">
+<sem_type>any</sem_type>
+</parameter>
+<parameter id="BadMirrorRows">
+<sem_type>any</sem_type>
+</parameter>
+<parameter id="DefectCrosses">
+<sem_type>xld</sem_type>
+</parameter>
+<parameter id="DmdResCol">
+<sem_type>any</sem_type>
+</parameter>
+<parameter id="DmdResRow">
+<sem_type>any</sem_type>
+</parameter>
+<parameter id="GenCross">
+<default_type>string</default_type>
+<default_value>false</default_value>
+<sem_type>string</sem_type>
+<type_list>
+<item>string</item>
+</type_list>
+</parameter>
+<parameter id="GrayThresh">
+<sem_type>any</sem_type>
+</parameter>
+<parameter id="Image">
+<sem_type>image</sem_type>
+<type_list>
+<item>byte</item>
+<item>int1</item>
+<item>int2</item>
+<item>uint2</item>
+<item>int4</item>
+<item>int8</item>
+<item>real</item>
+<item>cyclic</item>
+<item>direction</item>
+<item>complex</item>
+<item>vector_field</item>
+</type_list>
+</parameter>
+<parameter id="ImagePart">
+<sem_type>image</sem_type>
+<type_list>
+<item>byte</item>
+<item>int1</item>
+<item>int2</item>
+<item>uint2</item>
+<item>int4</item>
+<item>int8</item>
+<item>real</item>
+<item>cyclic</item>
+<item>direction</item>
+<item>complex</item>
+<item>vector_field</item>
+</type_list>
+</parameter>
+<parameter id="MinArea">
+<sem_type>any</sem_type>
+</parameter>
+<parameter id="ValidRowStrings">
+<default_type>string</default_type>
+<sem_type>string</sem_type>
+<type_list>
+<item>string</item>
+</type_list>
+</parameter>
+<parameter id="invert">
+<default_type>string</default_type>
+<default_value>false</default_value>
+<sem_type>string</sem_type>
+<type_list>
+<item>string</item>
+</type_list>
+</parameter>
+</parameters>
+</docu>
+</procedure>
+<procedure name="paint_crosses_to_image">
+<interface>
+<io>
+<par name="ImageIn" base_type="iconic" dimension="0"/>
+<par name="DefectCrosses" base_type="iconic" dimension="0"/>
+</io>
+<oo>
+<par name="ImageOut" base_type="iconic" dimension="0"/>
+</oo>
+<ic>
+<par name="GenCrossOption" base_type="ctrl" dimension="0"/>
+</ic>
+</interface>
+<body>
+<c>* ---------------------------------------------------------------------</c>
+<c>* Procedure: paint_crosses_to_image (现在实际绘制的是中心点)</c>
+<c>* ---------------------------------------------------------------------</c>
+<c>* 接口参数：</c>
+<c>* ImageIn        : Object (输入原图)</c>
+<c>* DefectCrosses  : Object (输入的坏点 XLD 轮廓)</c>
+<c>* GenCrossOption : Ctrl   (是否生成/绘制标志)</c>
+<c>* ImageOut       : Object (输出的、已画上红点的图像)</c>
+<c>* ---------------------------------------------------------------------</c>
+<c></c>
+<c>* 1. 默认先将输入图像复制给输出，确保函数始终有返回</c>
+<l>if (GenCrossOption == 'true')</l>
+<c>    * 2. 获取对象数量</c>
+<l>    count_obj (DefectCrosses, Number)</l>
+<c>    </c>
+<l>    if (Number &gt; 0)</l>
+<c>        * 3. 提取所有 XLD 的中心点坐标 (Row, Col)</c>
+<c>        * area_center_xld 对 XLD 十字架计算非常快</c>
+<l>        area_center_xld(DefectCrosses, Area, Rows, Cols, PointOrder)</l>
+<c>        * 4. 处理颜色通道：确保能在图像上画出红色</c>
+<l>        count_channels (ImageIn, Channels)</l>
+<l>        if (Channels == 1)</l>
+<c>            * 灰度图转 RGB (直接在 compose3 传入三次 ImageIn 即可，无需多次 copy)</c>
+<l>            copy_image(ImageIn, DupImage)</l>
+<l>            copy_image(DupImage, DupImage1)</l>
+<l>            compose3 (ImageIn, DupImage, DupImage1, ImageRGB)</l>
+<l>        else</l>
+<l>            copy_image (ImageIn, ImageRGB)</l>
+<l>        endif</l>
+<c>        </c>
+<c>        * 5. 生成点区域并加粗</c>
+<c>        * 将所有坐标点一次性转为一个 Region 对象</c>
+<l>        gen_region_points (RegionPoints, Rows, Cols)</l>
+<c>        * 工业相机分辨率高时，单像素点看不清，建议膨胀 1.5~2.5 像素</c>
+<l>*         dilation_circle (RegionPoints, RegionDots, 1.5)</l>
+<c>        </c>
+<c>        * 6. 涂抹红色 [255, 0, 0] 到像素</c>
+<l>        paint_region (RegionPoints, ImageRGB, ImageOut, [255, 0, 0], 'fill')</l>
+<l>    endif</l>
+<l>endif</l>
+<c></c>
+<l>return ()</l>
+</body>
+<docu id="paint_crosses_to_image">
+<parameters>
+<parameter id="DefectCrosses">
+<sem_type>object</sem_type>
+</parameter>
+<parameter id="GenCrossOption">
+<default_type>string</default_type>
+<sem_type>string</sem_type>
+<type_list>
+<item>string</item>
+</type_list>
+</parameter>
+<parameter id="ImageIn">
+<sem_type>object</sem_type>
+</parameter>
+<parameter id="ImageOut">
+<sem_type>object</sem_type>
+</parameter>
+</parameters>
+</docu>
+</procedure>
+</hdevelop>

@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<hdevelop file_version="1.2" halcon_version="24.11.1.0">
+<procedure name="main">
+<interface/>
+<body>
+<c>* ==========================================================</c>
+<c>* Main Routine</c>
+<c>* ==========================================================</c>
+<l>dev_update_off ()</l>
+<l>dev_open_window(0, 0, 512, 512, 'black', WindowHandle)</l>
+<c>* 1. 准备环境：列出文件并读取 OCR 字典</c>
+<l>list_image_files ('D:/data/DMD坏点检测/ocr', 'default', [], ImageFiles)</l>
+<l>read_ocr_class_mlp ('Industrial_0-9A-Z_NoRej.omc', OCRHandle)</l>
+<c></c>
+<c>* 2. 遍历图像文件</c>
+<l>for i := 1 to |ImageFiles| by 1 </l>
+<l>    read_image (Image, ImageFiles[i-1])</l>
+<c>    </c>
+<c>    * 调用封装好的核心处理函数</c>
+<c>    * 输入: Image (原图), OCRHandle (句柄)</c>
+<c>    * 输出: ImagePart (校正后的图), SortedChars (提取出的字符区域), LineStrings (识别结果数组)</c>
+<l>    extract_and_read_ocr (Image, ImagePart, SortedChars, OCRHandle, LineStrings)</l>
+<c>    </c>
+<c>    * --- 可视化与结果展示 (仅供调试/演示) ---</c>
+<l>    dev_clear_window()</l>
+<l>    dev_display (ImagePart)</l>
+<l>    dev_set_color ('green')</l>
+<l>    dev_set_draw ('margin')</l>
+<l>    dev_display (SortedChars)</l>
+<c>    </c>
+<c>    * 在窗口打印识别到的内容</c>
+<l>    for k := 0 to |LineStrings| - 1 by 1</l>
+<l>        disp_message (WindowHandle, LineStrings[k], 'window', 20 + k * 50, 20, 'black', 'true')</l>
+<l>    endfor</l>
+<c>    </c>
+<c>    * 暂停以查看当前图像的处理结果</c>
+<l>    disp_message (WindowHandle, 'Press F5 to continue...', 'window', 200, 20, 'blue', 'true')</l>
+<l>    stop ()</l>
+<l>endfor</l>
+<c></c>
+<c>* 3. 释放 OCR 句柄资源</c>
+<l>clear_ocr_class_mlp (OCRHandle)</l>
+</body>
+<docu id="main">
+<parameters/>
+</docu>
+</procedure>
+<procedure name="extract_and_read_ocr">
+<interface>
+<io>
+<par name="Image" base_type="iconic" dimension="0"/>
+</io>
+<oo>
+<par name="ImagePart" base_type="iconic" dimension="0"/>
+<par name="SortedChars" base_type="iconic" dimension="0"/>
+</oo>
+<ic>
+<par name="OCRHandle" base_type="ctrl" dimension="0"/>
+</ic>
+<oc>
+<par name="LineStrings" base_type="ctrl" dimension="0"/>
+</oc>
+</interface>
+<body>
+<c>* ==========================================================</c>
+<c>* Procedure: extract_and_read_ocr</c>
+<c>* Purpose:   定位目标区域，进行仿射变换校正，分割字符并逐行进行OCR识别</c>
+<c>* Iconic Inputs:</c>
+<c>* Image        - 原始输入图像</c>
+<c>* Iconic Outputs:</c>
+<c>* ImagePart    - 校正并裁剪后的目标区域图像</c>
+<c>* SortedChars  - 最终分割并排序好的字符区域</c>
+<c>* Control Inputs:</c>
+<c>* OCRHandle    - 已加载的 OCR 分类器句柄</c>
+<c>* Control Outputs:</c>
+<c>* LineStrings  - 按行识别出的字符串数组</c>
+<c>* ==========================================================</c>
+<c></c>
+<c>* --- 1. 区域提取，仿射变换，旋转 ---</c>
+<l>binary_threshold(Image, Region, 'max_separability', 'light', UsedThreshold)</l>
+<l>closing_rectangle1(Region, RegionClosing, 51, 51)</l>
+<l>fill_up(RegionClosing, RegionFillUp)</l>
+<l>connection(RegionFillUp, ConnectedRegions)</l>
+<l>select_shape_std(ConnectedRegions, SelectedRegions, ['max_area'], [90])</l>
+<l>gen_contour_region_xld(SelectedRegions, Contours, 'border')</l>
+<l>fit_rectangle2_contour_xld (Contours, 'regression', -1, 0, 0, 3, 2, \
+                            RectRow, RectCol, RectPhi, RectLength1, RectLength2, PointOrder)</l>
+<l>gen_rectangle2 (DmdRectangle, RectRow, RectCol, RectPhi, RectLength1, RectLength2)</l>
+<c></c>
+<c>* 获取刚性变换矩阵并校正图像</c>
+<l>vector_angle_to_rigid (RectRow, RectCol, RectPhi, RectRow, RectCol, 0, HomMat2D)</l>
+<l>affine_trans_image (Image, ImageAffine, HomMat2D, 'constant', 'false')</l>
+<l>affine_trans_region (DmdRectangle, RectAffine, HomMat2D, 'nearest_neighbor')</l>
+<l>reduce_domain(ImageAffine, RectAffine, ImageReduced)</l>
+<l>crop_domain(ImageReduced, ImagePart)</l>
+<c></c>
+<c>* --- 2. 预处理：提取文字区域 ---</c>
+<l>invert_image (ImagePart, ImageInvert)</l>
+<l>mean_image(ImageInvert, ImageMean, 51, 51)</l>
+<l>dyn_threshold(ImagePart, ImageMean, RegionDynThresh, 15, 'dark')</l>
+<c></c>
+<c>* 打断并过滤干扰（根据字符大小筛选）</c>
+<l>connection (RegionDynThresh, ConnectedChars)</l>
+<l>select_shape (ConnectedChars, SelectedChars, \
+              ['width','height','convexity','rectangularity'], \
+              'and', \
+              [120, 400, 0.25, 0.25], [500, 550, 1.0, 1.0])</l>
+<c></c>
+<c>* 对筛选出的字符进行排序，准备分行</c>
+<l>sort_region (SelectedChars, SortedChars, 'character', 'true', 'row')</l>
+<l>area_center (SortedChars, Area, Rows, Cols)</l>
+<l>count_obj (SortedChars, NumChars)</l>
+<c></c>
+<c>* --- 3. 循环遍历字符，自动分行识别 ---</c>
+<l>LineStrings := []    </l>
+<l>gen_empty_obj (CurrentLineObj)</l>
+<c>* 设置行间距阈值</c>
+<l>MaxRowGap := 200</l>
+<c></c>
+<l>if (NumChars &gt; 0)</l>
+<l>    for j := 1 to NumChars by 1</l>
+<l>        select_obj (SortedChars, SingleChar, j)</l>
+<c>        </c>
+<c>        * 检查是否换行（从第2个字符开始判断）</c>
+<l>        if (j &gt; 1)</l>
+<l>            RowGap := Rows[j-1] - Rows[j-2]</l>
+<l>            if (RowGap &gt; MaxRowGap)</l>
+<c>                * --- 识别并清理当前行内容 ---</c>
+<l>                do_ocr_multi_class_mlp (CurrentLineObj, ImagePart, OCRHandle, Class, Conf)</l>
+<l>                RawStr := sum(Class)</l>
+<c>                * 修正正则替换写法: 使用元组 ['\\s+', 'replace_all'] 替换所有空白字符</c>
+<l>                tuple_regexp_replace (RawStr, ['\\s+', 'replace_all'], '', CleanStr)</l>
+<l>                LineStrings := [LineStrings, CleanStr]</l>
+<c>                </c>
+<c>                * 重置当前行对象</c>
+<l>                gen_empty_obj (CurrentLineObj)</l>
+<l>            endif</l>
+<l>        endif</l>
+<c>        </c>
+<c>        * 将当前字符加入当前行</c>
+<l>        concat_obj (CurrentLineObj, SingleChar, CurrentLineObj)</l>
+<l>    endfor</l>
+<c>    </c>
+<c>    * --- 识别最后一行 ---</c>
+<l>    do_ocr_multi_class_mlp (CurrentLineObj, ImagePart, OCRHandle, Class, Conf)</l>
+<l>    tuple_regexp_replace (sum(Class), ['\\s+', 'replace_all'], '', CleanStr)</l>
+<l>    LineStrings := [LineStrings, CleanStr]</l>
+<l>endif</l>
+<c></c>
+<l>return ()</l>
+</body>
+<docu id="extract_and_read_ocr">
+<parameters>
+<parameter id="Image">
+<sem_type>image</sem_type>
+<type_list>
+<item>byte</item>
+<item>int1</item>
+<item>int2</item>
+<item>uint2</item>
+<item>int4</item>
+<item>int8</item>
+<item>real</item>
+<item>cyclic</item>
+<item>direction</item>
+<item>complex</item>
+<item>vector_field</item>
+</type_list>
+</parameter>
+<parameter id="ImagePart">
+<sem_type>image</sem_type>
+<type_list>
+<item>byte</item>
+<item>int1</item>
+<item>int2</item>
+<item>uint2</item>
+<item>int4</item>
+<item>int8</item>
+<item>real</item>
+<item>cyclic</item>
+<item>direction</item>
+<item>complex</item>
+<item>vector_field</item>
+</type_list>
+</parameter>
+<parameter id="LineStrings">
+<sem_type>any</sem_type>
+</parameter>
+<parameter id="OCRHandle">
+<sem_type>any</sem_type>
+</parameter>
+<parameter id="SortedChars">
+<sem_type>object</sem_type>
+</parameter>
+</parameters>
+</docu>
+</procedure>
+</hdevelop>
